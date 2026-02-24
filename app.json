@@ -13,7 +13,8 @@
       "bundleIdentifier": "com.anonymous.quick-momo",
       "infoPlist": {
         "NSContactsUsageDescription": "This app needs access to your contacts to select phone numbers for payments.",
-        "CFBundleDisplayName": "Quick MoMo"
+        "CFBundleDisplayName": "Quick MoMo",
+        "LSApplicationQueriesSchemes": ["tel"]
       }
     },
     "android": {
