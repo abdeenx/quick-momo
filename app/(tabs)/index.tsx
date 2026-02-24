@@ -9,15 +9,27 @@ import {
   Linking,
   Platform,
   ActivityIndicator,
+  Modal,
+  FlatList,
+  ScrollView,
 } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import { Ionicons } from '@expo/vector-icons';
 import { useSettings } from '../../context/SettingsContext';
 
+interface ContactItem {
+  id: string;
+  name: string;
+  phoneNumbers?: string[];
+}
+
 export default function HomeScreen() {
   const [phoneOrCode, setPhoneOrCode] = useState('');
   const [amount, setAmount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [contactsModalVisible, setContactsModalVisible] = useState(false);
+  const [contacts, setContacts] = useState<ContactItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const { numberFormat, codeFormat } = useSettings();
 
   const formatPhoneNumber = (number: string): string => {
@@ -31,7 +43,7 @@ export default function HomeScreen() {
     return cleaned;
   };
 
-  const pickContact = async () => {
+  const loadContacts = async () => {
     setIsLoading(true);
     
     try {
@@ -44,14 +56,19 @@ export default function HomeScreen() {
           });
           
           if (result.data && result.data.length > 0) {
-            const contact = result.data[0];
-            if (contact.phoneNumbers && contact.phoneNumbers.length > 0) {
-              const number = contact.phoneNumbers[0].number || '';
-              const formattedNumber = formatPhoneNumber(number);
-              setPhoneOrCode(formattedNumber);
-              Alert.alert('Success', `Selected: ${contact.name || 'Unknown'}`);
+            const formattedContacts: ContactItem[] = result.data
+              .filter(contact => contact.phoneNumbers && contact.phoneNumbers.length > 0)
+              .map(contact => ({
+                id: contact.id || String(Math.random()),
+                name: contact.name || 'Unknown',
+                phoneNumbers: contact.phoneNumbers?.map(p => p.number || '').filter(Boolean) || [],
+              }));
+            
+            if (formattedContacts.length > 0) {
+              setContacts(formattedContacts);
+              setContactsModalVisible(true);
             } else {
-              Alert.alert('No Phone Number', 'This contact does not have a phone number.');
+              Alert.alert('No Contacts', 'No contacts with phone numbers found.');
             }
           } else {
             Alert.alert(
@@ -99,18 +116,53 @@ export default function HomeScreen() {
     }
   };
 
+  const selectContact = (contact: ContactItem, phoneNumber: string) => {
+    const formattedNumber = formatPhoneNumber(phoneNumber);
+    setPhoneOrCode(formattedNumber);
+    setContactsModalVisible(false);
+    setSearchQuery('');
+  };
+
+  const filteredContacts = contacts.filter(contact => 
+    contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    contact.phoneNumbers?.some(phone => phone.includes(searchQuery))
+  );
+
+  const renderContactItem = ({ item }: { item: ContactItem }) => (
+    <View style={styles.contactItem}>
+      <Text style={styles.contactName}>{item.name}</Text>
+      {item.phoneNumbers?.map((phone, index) => (
+        <TouchableOpacity
+          key={`${item.id}-${index}`}
+          style={styles.phoneNumberButton}
+          onPress={() => selectContact(item, phone)}
+        >
+          <Text style={styles.phoneNumberText}>{phone}</Text>
+          <Ionicons name="checkmark-circle" size={20} color="#007AFF" />
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
   const dialUSSD = async (ussdCode: string) => {
-    const encodedCode = encodeURIComponent(ussdCode);
-    const url = Platform.OS === 'ios' ? `tel:${encodedCode}` : `tel:${ussdCode}`;
+    let url: string;
+    
+    if (Platform.OS === 'ios') {
+      url = `tel:${encodeURIComponent(ussdCode)}`;
+    } else {
+      const encodedCode = ussdCode.replace(/#/g, encodeURIComponent('#'));
+      url = `tel:${encodedCode}`;
+    }
     
     try {
       const canOpen = await Linking.canOpenURL(url);
       if (canOpen) {
         await Linking.openURL(url);
       } else {
-        Alert.alert('Error', 'Cannot open dialer on this device.');
+        Alert.alert('Error', 'Cannot open dialer on this device/emulator.');
       }
-    } catch {
+    } catch (error) {
+      console.log('Dial error:', error);
       Alert.alert('Error', 'Failed to open dialer.');
     }
   };
@@ -144,7 +196,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.card}>
         <Text style={styles.label}>Phone Number or Code</Text>
         <View style={styles.inputContainer}>
@@ -154,11 +206,18 @@ export default function HomeScreen() {
             onChangeText={setPhoneOrCode}
             placeholder="Enter phone number or code"
             keyboardType="phone-pad"
-            autoFocus
           />
+          {phoneOrCode.length > 0 && (
+            <TouchableOpacity 
+              style={styles.clearButton} 
+              onPress={() => setPhoneOrCode('')}
+            >
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity 
             style={[styles.contactButton, isLoading && styles.contactButtonDisabled]} 
-            onPress={pickContact}
+            onPress={loadContacts}
             disabled={isLoading}
           >
             {isLoading ? (
@@ -170,13 +229,23 @@ export default function HomeScreen() {
         </View>
 
         <Text style={styles.label}>Amount</Text>
-        <TextInput
-          style={[styles.input, styles.amountInput]}
-          value={amount}
-          onChangeText={setAmount}
-          placeholder="Enter amount"
-          keyboardType="numeric"
-        />
+        <View style={styles.amountInputContainer}>
+          <TextInput
+            style={[styles.input, styles.amountInput]}
+            value={amount}
+            onChangeText={setAmount}
+            placeholder="Enter amount"
+            keyboardType="numeric"
+          />
+          {amount.length > 0 && (
+            <TouchableOpacity 
+              style={styles.clearButtonAmount} 
+              onPress={() => setAmount('')}
+            >
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={handlePayToNumber}>
@@ -188,7 +257,66 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
-    </View>
+
+      {/* Contact Picker Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={contactsModalVisible}
+        onRequestClose={() => {
+          setContactsModalVisible(false);
+          setSearchQuery('');
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Contact</Text>
+              <TouchableOpacity 
+                style={styles.closeButton}
+                onPress={() => {
+                  setContactsModalVisible(false);
+                  setSearchQuery('');
+                }}
+              >
+                <Ionicons name="close" size={28} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search contacts..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Ionicons name="close-circle" size={20} color="#999" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <FlatList
+              data={filteredContacts}
+              keyExtractor={(item) => item.id}
+              renderItem={renderContactItem}
+              style={styles.contactsList}
+              showsVerticalScrollIndicator={true}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>
+                    {searchQuery ? 'No contacts found matching your search' : 'No contacts available'}
+                  </Text>
+                </View>
+              }
+            />
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
   );
 }
 
@@ -232,6 +360,14 @@ const styles = StyleSheet.create({
   amountInput: {
     marginBottom: 24,
   },
+  amountInputContainer: {
+    position: 'relative',
+  },
+  clearButtonAmount: {
+    position: 'absolute',
+    right: 12,
+    top: 14,
+  },
   contactButton: {
     width: 48,
     height: 48,
@@ -245,6 +381,11 @@ const styles = StyleSheet.create({
   },
   contactButtonDisabled: {
     opacity: 0.5,
+  },
+  clearButton: {
+    position: 'absolute',
+    right: 56,
+    padding: 4,
   },
   buttonContainer: {
     gap: 12,
@@ -270,5 +411,88 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: '#007AFF',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '80%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 16,
+    paddingHorizontal: 12,
+    height: 44,
+    backgroundColor: '#F2F2F7',
+    borderRadius: 10,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
+  },
+  contactsList: {
+    flex: 1,
+  },
+  contactItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
+  },
+  contactName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  phoneNumberButton: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  phoneNumberText: {
+    fontSize: 15,
+    color: '#007AFF',
+  },
+  emptyState: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center',
   },
 });
